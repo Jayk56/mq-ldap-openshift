@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mq-directory
+resources:
+  - ../../base
+  - ../../cross-cluster/aws-privatelink
+images:
+  - name: quay.io/389ds/dirsrv
+    newName: registry.example.invalid/platform/dirsrv
+patches:
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: mq-ldap-privatelink
+        annotations:
+          service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-REPLACE-A,subnet-REPLACE-B"
+          service.beta.kubernetes.io/aws-load-balancer-private-ipv4-addresses: "192.0.2.10,198.51.100.10"
+          service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-REPLACE-LDAP"
+# One address per subnet, in the same order and with no spaces after the comma.
+# Use those same addresses for the directory's two /32 access rules.
+replacements:
+  - source:
+      kind: Service
+      name: mq-ldap-privatelink
+      fieldPath: metadata.annotations.[service.beta.kubernetes.io/aws-load-balancer-private-ipv4-addresses]
+      options: {delimiter: ",", index: 0}
+    targets:
+      - select: {kind: NetworkPolicy, name: mq-ldap-from-aws-nlb}
+        fieldPaths: [spec.ingress.0.from.0.ipBlock.cidr]
+        options: {delimiter: "/", index: 0}
+  - source:
+      kind: Service
+      name: mq-ldap-privatelink
+      fieldPath: metadata.annotations.[service.beta.kubernetes.io/aws-load-balancer-private-ipv4-addresses]
+      options: {delimiter: ",", index: 1}
+    targets:
+      - select: {kind: NetworkPolicy, name: mq-ldap-from-aws-nlb}
+        fieldPaths: [spec.ingress.0.from.1.ipBlock.cidr]
+        options: {delimiter: "/", index: 0}

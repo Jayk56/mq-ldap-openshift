@@ -1,5 +1,5 @@
 # Replace the example host, channel, queue manager and queue names with values from the MQ team.
-# Each javaReferenceAddress uses #number#property#value. Start at 0 for each entry and number the lines in order.
+# Use #number#property#value. For each entry, start at 0 and use each number once without gaps.
 dn: cn=OrdersCF,ou=mq,dc=messaging
 objectClass: top
 objectClass: javaContainer

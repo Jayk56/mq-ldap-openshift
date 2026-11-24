@@ -33,8 +33,8 @@ public final class LdapContextFactory implements ObjectFactory {
         }
         String password = Files.readString(Path.of(setting(ref, "passwordFile")),
                 StandardCharsets.UTF_8).replaceFirst("[\\r\\n]+\\z", "");
-        if (password.isEmpty()) {
-            throw new ConfigurationException("The LDAP reader password file is empty");
+        if (password.isEmpty() || password.indexOf('\r') >= 0 || password.indexOf('\n') >= 0) {
+            throw new ConfigurationException("The LDAP reader password must be a single nonempty line");
         }
         Hashtable<String, String> properties = new Hashtable<>();
         properties.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");

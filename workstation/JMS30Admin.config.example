@@ -4,4 +4,4 @@ PROVIDER_URL=ldaps://mq-ldap.internal.example:636/ou=mq,dc=messaging
 SECURITY_AUTHENTICATION=simple
 NAME_PREFIX=cn=
 PROVIDER_USERDN=uid=mq-publisher,ou=services,dc=messaging
-# Set PROVIDER_PASSWORD in the operator's private copy using the password from the vault.
+# PrepareJmsConfig.java adds the publisher password to a private output file.

@@ -11,4 +11,5 @@ dist/
 kubeconfig
 auth.json
 settings.xml
-JMS30Admin.config
+JMS30Admin*.config
+JMS30Admin*.config.partial

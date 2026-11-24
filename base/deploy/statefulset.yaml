@@ -48,9 +48,10 @@ spec:
               cpu: "1"
               memory: 1Gi
           startupProbe:
-            tcpSocket:
-              port: ldaps
+            exec:
+              command: [python3, /opt/mq-ldap/directory.py, check-admin]
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 60
           readinessProbe:
             exec:
