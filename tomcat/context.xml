@@ -1,0 +1,10 @@
+<Context>
+  <Resource name="ldap/MqCatalog"
+            auth="Container"
+            type="javax.naming.directory.DirContext"
+            factory="example.mqldap.LdapContextFactory"
+            singleton="false"
+            providerUrl="${mq.ldap.url:-ldaps://mq-ldap.mq-directory.svc:636/ou=mq,dc=messaging}"
+            bindDn="uid=tomcat-reader,ou=services,dc=messaging"
+            passwordFile="/etc/mq-ldap-reader/password" />
+</Context>

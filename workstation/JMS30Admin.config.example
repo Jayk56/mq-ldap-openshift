@@ -1,0 +1,7 @@
+# Use the private directory hostname listed on the server certificate.
+INITIAL_CONTEXT_FACTORY=com.sun.jndi.ldap.LdapCtxFactory
+PROVIDER_URL=ldaps://mq-ldap.internal.example:636/ou=mq,dc=messaging
+SECURITY_AUTHENTICATION=simple
+NAME_PREFIX=cn=
+PROVIDER_USERDN=uid=mq-publisher,ou=services,dc=messaging
+# Set PROVIDER_PASSWORD in the operator's private copy using the password from the vault.

@@ -1,0 +1,2 @@
+# Allow Java to turn LDAP entries into IBM MQ queues and connection factories.
+jdk.jndi.ldap.object.factoriesFilter=com.ibm.mq.jakarta.jms.MQQueueConnectionFactoryFactory;com.ibm.mq.jakarta.jms.MQQueueFactory;java.naming/com.sun.jndi.ldap.**;!*

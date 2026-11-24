@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mq-ldap
+spec:
+  serviceName: mq-ldap-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mq-ldap
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mq-ldap
+    spec:
+      serviceAccountName: mq-ldap
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: directory
+          image: quay.io/389ds/dirsrv@sha256:40b6cd8370de9ed2856262c5f8a675aeb84c17cf9f7f6957fe7cc8d88988004a
+          command: [python3, /opt/mq-ldap/start.py]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: DS_SUFFIX_NAME
+              value: dc=messaging
+            - name: DS_STARTUP_TIMEOUT
+              value: "240"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: ldaps
+              containerPort: 3636
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: ldaps
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [python3, /opt/mq-ldap/check-tls.py]
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: ldaps
+            periodSeconds: 30
+            failureThreshold: 4
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tls, mountPath: /data/tls, readOnly: true}
+            - {name: ca, mountPath: /data/tls/ca, readOnly: true}
+            - {name: admin, mountPath: /etc/mq-ldap-admin, readOnly: true}
+            - {name: tools, mountPath: /opt/mq-ldap, readOnly: true}
+      volumes:
+        - name: tls
+          secret:
+            secretName: mq-ldap-tls
+            defaultMode: 0440
+            items:
+              - {key: tls.crt, path: server.crt}
+              - {key: tls.key, path: server.key}
+        - name: ca
+          configMap:
+            name: mq-ldap-ca
+        - name: admin
+          secret:
+            secretName: mq-ldap-admin
+            defaultMode: 0440
+        - name: tools
+          configMap:
+            name: mq-ldap-tools
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        volumeMode: Filesystem
+        resources:
+          requests:
+            storage: 10Gi

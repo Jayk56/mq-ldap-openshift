@@ -1,0 +1,17 @@
+dn: dc=messaging
+objectClass: top
+objectClass: domain
+dc: messaging
+
+dn: ou=services,dc=messaging
+objectClass: top
+objectClass: organizationalUnit
+ou: services
+
+dn: ou=mq,dc=messaging
+objectClass: top
+objectClass: organizationalUnit
+ou: mq
+aci: (targetattr="ou || cn || objectClass || javaClassName || javaClassNames || javaFactory || javaReferenceAddress")(version 3.0; acl "Tomcat MQ catalog read"; allow (read,search,compare) userdn="ldap:///uid=tomcat-reader,ou=services,dc=messaging";)
+aci: (targetattr="ou || cn || objectClass || javaClassName || javaClassNames || javaFactory || javaReferenceAddress")(version 3.0; acl "MQ publisher catalog read"; allow (read,search,compare) userdn="ldap:///uid=mq-publisher,ou=services,dc=messaging";)
+aci: (target="ldap:///cn=*,ou=mq,dc=messaging")(targetattr="cn || objectClass || javaClassName || javaClassNames || javaFactory || javaReferenceAddress")(version 3.0; acl "MQ publisher reference management"; allow (add,write,delete) userdn="ldap:///uid=mq-publisher,ou=services,dc=messaging";)

@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mq-ldap-remote-tomcat
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mq-ldap
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            # Use the source address the directory sees after any address translation.
+            cidr: 198.51.100.20/32
+      ports:
+        - {protocol: TCP, port: 3636}

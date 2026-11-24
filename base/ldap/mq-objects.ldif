@@ -1,0 +1,38 @@
+# Replace the example host, channel, queue manager and queue names with values from the MQ team.
+# Each javaReferenceAddress uses #number#property#value. Start at 0 for each entry and number the lines in order.
+dn: cn=OrdersCF,ou=mq,dc=messaging
+objectClass: top
+objectClass: javaContainer
+objectClass: javaNamingReference
+cn: OrdersCF
+javaClassName: com.ibm.mq.jakarta.jms.MQQueueConnectionFactory
+javaFactory: com.ibm.mq.jakarta.jms.MQQueueConnectionFactoryFactory
+javaReferenceAddress: #0#VER#7
+javaReferenceAddress: #1#TRAN#1
+javaReferenceAddress: #2#QMGR#QM1
+javaReferenceAddress: #3#HOST#mq.example.invalid
+javaReferenceAddress: #4#PORT#1414
+javaReferenceAddress: #5#CHAN#APP.SVRCONN
+javaReferenceAddress: #6#SCPHS#TLS_AES_256_GCM_SHA384
+
+dn: cn=OrdersIn,ou=mq,dc=messaging
+objectClass: top
+objectClass: javaContainer
+objectClass: javaNamingReference
+cn: OrdersIn
+javaClassName: com.ibm.mq.jakarta.jms.MQQueue
+javaFactory: com.ibm.mq.jakarta.jms.MQQueueFactory
+javaReferenceAddress: #0#VER#7
+javaReferenceAddress: #1#QU#APP.ORDERS.IN
+javaReferenceAddress: #2#QMGR#QM1
+
+dn: cn=OrdersOut,ou=mq,dc=messaging
+objectClass: top
+objectClass: javaContainer
+objectClass: javaNamingReference
+cn: OrdersOut
+javaClassName: com.ibm.mq.jakarta.jms.MQQueue
+javaFactory: com.ibm.mq.jakarta.jms.MQQueueFactory
+javaReferenceAddress: #0#VER#7
+javaReferenceAddress: #1#QU#APP.ORDERS.OUT
+javaReferenceAddress: #2#QMGR#QM1

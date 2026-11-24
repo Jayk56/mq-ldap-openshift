@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mq-ldap-privatelink
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
+    # Supply two directory-side subnets and one available private address from each.
+    service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-REPLACE-A,subnet-REPLACE-B"
+    service.beta.kubernetes.io/aws-load-balancer-private-ipv4-addresses: "192.0.2.10,198.51.100.10"
+    # Use the security group that allows approved clients to reach TCP 636.
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-REPLACE-LDAP"
+    service.beta.kubernetes.io/aws-load-balancer-inbound-sg-rules-on-private-link-traffic: "on"
+    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+    # 389 DS expects the TLS handshake as the first bytes on the connection.
+    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: proxy_protocol_v2.enabled=false
+    # Either zone can forward to the node running the single directory pod.
+    service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: http
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /healthz
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: mq-ldap
+  ports:
+    - name: ldaps
+      protocol: TCP
+      port: 636
+      targetPort: ldaps
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mq-ldap-from-aws-nlb
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mq-ldap
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Use the two load balancer addresses above, each followed by /32.
+        - ipBlock: {cidr: 192.0.2.10/32}
+        - ipBlock: {cidr: 198.51.100.10/32}
+      ports:
+        - {protocol: TCP, port: 3636}
