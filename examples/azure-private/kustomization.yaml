@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mq-directory
+resources:
+  - ../../base
+  - ../../cross-cluster/azure-private
+images:
+  - name: quay.io/389ds/dirsrv
+    newName: registry.example.invalid/platform/dirsrv
+patches:
+  - target: {kind: Service, name: mq-ldap-private}
+    patch: |-
+      - op: replace
+        path: /spec/loadBalancerSourceRanges
+        value: [192.0.2.10/32, 198.51.100.20/32]
+# Set the workstation range first and the remote Tomcat range second, above.
+# Keep these copies in the final work overlay so they use the site's addresses.
+replacements:
+  - source:
+      kind: Service
+      name: mq-ldap-private
+      fieldPath: spec.loadBalancerSourceRanges.0
+    targets:
+      - select: {kind: NetworkPolicy, name: mq-ldap-workstation}
+        fieldPaths: [spec.ingress.0.from.0.ipBlock.cidr]
+  - source:
+      kind: Service
+      name: mq-ldap-private
+      fieldPath: spec.loadBalancerSourceRanges.1
+    targets:
+      - select: {kind: NetworkPolicy, name: mq-ldap-remote-tomcat}
+        fieldPaths: [spec.ingress.0.from.0.ipBlock.cidr]

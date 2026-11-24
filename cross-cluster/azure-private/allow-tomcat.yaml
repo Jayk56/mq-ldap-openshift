@@ -10,7 +10,7 @@ spec:
   ingress:
     - from:
         - ipBlock:
-            # Use the source address the directory sees after any address translation.
+            # The Azure overlay fills this from the remote Tomcat range.
             cidr: 198.51.100.20/32
       ports:
         - {protocol: TCP, port: 3636}

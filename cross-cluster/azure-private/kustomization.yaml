@@ -13,3 +13,11 @@ patches:
         path: /spec/loadBalancerSourceRanges/-
         # Replace this example with the address range Tomcat uses to reach the load balancer.
         value: 198.51.100.20/32
+replacements:
+  - source:
+      kind: Service
+      name: mq-ldap-private
+      fieldPath: spec.loadBalancerSourceRanges.1
+    targets:
+      - select: {kind: NetworkPolicy, name: mq-ldap-remote-tomcat}
+        fieldPaths: [spec.ingress.0.from.0.ipBlock.cidr]
