@@ -23,3 +23,11 @@ The Maven build runs the Java lookup tests and copies the Tomcat runtime JARs. U
 ```sh
 mvn -B -f tomcat/pom.xml clean package
 ```
+
+Check the workstation config helper with JDK 11 or later. This uses a sample password with spaces, a backslash and Unicode characters and reads it back with IBM's Java file format.
+
+```sh
+test_dir=$(mktemp -d)
+javac --release 11 -d "$test_dir" workstation/PrepareJmsConfig.java tests/WorkstationConfigTest.java
+java -cp "$test_dir" WorkstationConfigTest "$test_dir"
+```

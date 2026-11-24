@@ -71,12 +71,13 @@ DIRECTORY_PROJECT=mq-directory
 dir_oc() { oc --context="${DIRECTORY_CONTEXT:?Set the directory context}" -n "${DIRECTORY_PROJECT:?Set the directory project}" "$@"; }
 ```
 
-If the secret manager already supplies the three directory resources, go straight to the checks below. For a first installation from approved files, use the following names and keys. Add a separate `--from-file=intermediate.crt=...` for each intermediate, giving each file its own name.
+If the secret manager already supplies the three directory resources, go straight to the checks below. Otherwise, prepare `server.crt` with the directory's certificate first, followed by any intermediate certificates in signing order. In the ConfigMap, give the public root and each intermediate its own `.crt` file. For a directly root-signed certificate, omit the intermediate argument below.
 
 ```sh
 dir_oc create secret generic mq-ldap-admin --from-file=password=/secure/admin-password
 dir_oc create secret tls mq-ldap-tls --cert=/secure/server.crt --key=/secure/server.key
-dir_oc create configmap mq-ldap-ca --from-file=root.crt=/secure/root.crt
+dir_oc create configmap mq-ldap-ca --from-file=root.crt=/secure/root.crt \
+  --from-file=intermediate.crt=/secure/intermediate.crt
 ```
 
 If this deployment needs its own image pull secret, create the service account before linking the existing secret. Run `dir_oc apply -f base/deploy/serviceaccount.yaml`, then `dir_oc secrets link mq-ldap YOUR_PULL_SECRET --for=pull`. A site-wide registry grant may already provide this access.
@@ -140,14 +141,22 @@ The block closes the LDAP connection on success or error. A missing alias raises
 
 ### Manage names from a workstation
 
-Install JMS30Admin from your approved IBM distribution. Configure its Java runtime to trust the directory issuer. Save a private copy of the workstation configuration with the real provider URL and publisher credentials, and restrict the file to the operator. In a dedicated operator shell, load the supplied Java factory settings and list the site's aliases. [Workstation configuration](workstation/JMS30Admin.config.example) · [IBM tool configuration](https://www.ibm.com/docs/en/ibm-mq/9.4.x?topic=tools-configuring-jmsadmin-jms30admin)
+Install JMS30Admin from your approved IBM distribution and configure its Java runtime to trust the directory's root CA. Copy the workstation template to `/secure/site.config` and set `PROVIDER_URL` to the private directory URL. Use a directory accessible only to the operator. [Workstation template](workstation/JMS30Admin.config.example) · [IBM tool configuration](https://www.ibm.com/docs/en/ibm-mq/9.4.x?topic=tools-configuring-jmsadmin-jms30admin)
+
+From the repository root, use JDK 11 or later to prepare a new config from the publisher's single-line UTF-8 password file. The helper preserves spaces, backslashes and non-ASCII characters in IBM's file format. The generated file and any unfinished `.partial` copy contain the password. Keep them outside Git. When rotating the password, choose a new filename such as `JMS30Admin-next.config` and pass that name to `-cfg`. A vault that already writes Java properties can supply the config directly. [Java properties format](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Properties.html)
+
+```sh
+java workstation/PrepareJmsConfig.java /secure/site.config /secure/publisher-password /secure/JMS30Admin.config
+```
+
+In a dedicated operator shell, load the supplied Java settings and list the site's aliases.
 
 ```sh
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Djava.security.properties=/secure/mq-ldap.security"
 JMS30Admin -cfg /secure/JMS30Admin.config < workstation/inspect.scp
 ```
 
-To check a target, open the tool interactively and use `DISPLAY Q(alias)` for a queue or `DISPLAY QCF(alias)` for a queue connection factory. Replace `alias` with a name from the inventory.
+To check a target, open the tool interactively and use `DISPLAY Q(alias)` for a queue or `DISPLAY QCF(alias)` for a queue connection factory. Use the name after `cn=`. For example, Tomcat looks up the literal alias `Invoices, East/Returns`. Enter `DISPLAY Q(Invoices\, East\/Returns)` in JMS30Admin. Use that same escaped spelling with `DEFINE`, `ALTER` and `DELETE`.
 
 For an edit check, start `JMS30Admin -cfg /secure/JMS30Admin.config` interactively. Replace `RolloutProbe` with a fresh alias for this run and use approved test targets. The MQ team creates the underlying queues. IBM's batch tool can exit successfully after reporting an individual command error.
 
