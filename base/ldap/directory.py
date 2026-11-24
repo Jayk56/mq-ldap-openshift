@@ -1,5 +1,6 @@
-"""Set up directory accounts or load queue names. Supply the account password or LDIF file on standard input."""
+"""Set up directory accounts and manage the IBM MQ catalog."""
 import argparse
+from contextlib import contextmanager
 import fcntl
 from pathlib import Path
 import subprocess
@@ -20,6 +21,7 @@ OBJECT_FIELDS = ("javaClassName", "javaFactory", "javaReferenceAddress")
 REQUIRED_FIELDS = ("objectClass", "cn", *OBJECT_FIELDS)
 CATALOG_FIELDS = (*REQUIRED_FIELDS, "javaClassNames")
 FIELD_NAMES = {field.lower(): field for field in CATALOG_FIELDS}
+ACTIONS = ("validate", "initialize", "writer", "publish", "check-admin")
 
 
 def connect(dn, password):
@@ -111,13 +113,21 @@ def catalog_entries(stream):
     names = set()
     for dn, raw in records(stream):
         attrs = catalog_attributes(raw)
-        parts = ldap.dn.str2dn(dn)
+        try:
+            parts = ldap.dn.str2dn(dn)
+        except (ldap.DECODING_ERROR, ldap.INVALID_DN_SYNTAX) as error:
+            raise ValueError(f"Invalid LDAP entry name (DN): {dn}") from error
         in_catalog = ldap.dn.dn2str(parts[1:]).casefold() == CATALOG.casefold()
         if not in_catalog or len(parts[0]) != 1 or parts[0][0][0].lower() != "cn":
             raise ValueError(f"Expected a cn immediately below {CATALOG}: {dn}")
-        if (set(attrs) - set(CATALOG_FIELDS) or not all(attrs.get(k) for k in REQUIRED_FIELDS)
-                or b"javanamingreference" not in [v.lower() for v in attrs["objectClass"]]):
-            raise ValueError(f"Expected an RFC 2713 queue or connection factory entry: {dn}")
+        missing = [field for field in REQUIRED_FIELDS if not attrs.get(field)]
+        if missing:
+            raise ValueError(f"{dn} is missing {', '.join(missing)}")
+        extra = sorted(set(attrs) - set(CATALOG_FIELDS))
+        if extra:
+            raise ValueError(f"{dn} has unsupported catalog fields: {', '.join(extra)}")
+        if b"javanamingreference" not in [v.lower() for v in attrs["objectClass"]]:
+            raise ValueError(f"{dn} needs objectClass: javaNamingReference")
         name = cn_key(parts[0][0][1])
         if not name or name not in {cn_key(v.decode("utf-8")) for v in attrs["cn"]}:
             raise ValueError(f"The cn attribute must include the name in the DN: {dn}")
@@ -156,42 +166,79 @@ def publish_entry(conn, dn, attrs):
     raise ValueError(f"Could not publish {dn}. Check the catalog exists and retry with one writer.")
 
 
-def publish(conn, stream):
-    for dn, attrs in catalog_entries(stream):
-        print(publish_entry(conn, dn, attrs), dn)
-
-
 def admin_connection():
     return connect(ADMIN, password_value(Path(PASSWORD_FILE).read_bytes()))
 
 
-def run(action):
+def publish_entries(conn, entries):
+    for dn, attrs in entries:
+        print(publish_entry(conn, dn, attrs), dn)
+
+
+def publish(conn, stream):
+    publish_entries(conn, catalog_entries(stream))
+
+
+@contextmanager
+def locked_admin():
+    with open("/data/run/mq-catalog.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        admin = admin_connection()
+        try:
+            yield admin
+        finally:
+            admin.unbind_s()
+
+
+def require_parent(admin, dn):
+    if get_entry(admin, dn, ["1.1"]) is None:
+        raise ValueError(f"{dn} is missing. Run initialize with the reader password first.")
+
+
+def run(action, source=None):
+    if action not in ACTIONS:
+        raise ValueError(f"Unknown directory action: {action}")
     if action == "check-admin":
         try:
             admin_connection().unbind_s()
         except (ldap.SERVER_DOWN, ldap.INVALID_CREDENTIALS):
             sys.exit("Waiting for the directory to accept the administrator password")
         return
-    with open("/data/run/mq-catalog.lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        admin = admin_connection()
-        try:
-            if action == "publish":
-                publish(admin, sys.stdin.buffer)
-            else:
-                password = password_value(sys.stdin.buffer.read())
-                if action == "initialize":
-                    initialize(admin)
-                    set_account(admin, "tomcat-reader", password)
-                elif action == "writer":
-                    set_account(admin, "mq-publisher", password)
-        finally:
-            admin.unbind_s()
+    if source is None:
+        source = sys.stdin.buffer
+    catalog_input = action in ("publish", "validate")
+    if source.isatty():
+        expected = "a catalog LDIF file" if catalog_input else "a password file"
+        raise ValueError(f"{action} reads {expected} from standard input. Redirect the file with <.")
+    if catalog_input:
+        entries = catalog_entries(source)
+        if action == "validate":
+            count = len(entries)
+            print(f"Validated {count} catalog {'entry' if count == 1 else 'entries'}.")
+        else:
+            with locked_admin() as admin:
+                require_parent(admin, CATALOG)
+                publish_entries(admin, entries)
+        return
+
+    password = password_value(source.read())
+    with locked_admin() as admin:
+        if action == "initialize":
+            initialize(admin)
+            set_account(admin, "tomcat-reader", password)
+        else:
+            require_parent(admin, "ou=services," + BASE)
+            set_account(admin, "mq-publisher", password)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["check-admin", "initialize", "writer", "publish"])
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""  validate    Check a catalog file offline.       validate < catalog.ldif
+  initialize  Set up the tree and reader account. initialize < reader-password
+  writer      Set the workstation account.       writer < publisher-password
+  publish     Apply the catalog to 389 DS.        publish < catalog.ldif
+  check-admin Check the local administrator login (used at pod startup).""")
+    parser.add_argument("action", choices=ACTIONS)
     try:
         run(parser.parse_args().action)
     except ValueError as error:

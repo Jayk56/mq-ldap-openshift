@@ -14,7 +14,7 @@ Record the directory project, Tomcat project or cluster, workstation network, an
 
 - [ ] **Same cluster.** Confirm the allowed Tomcat project and pod label. For a custom project, update the directory NetworkPolicy. The client connects to TCP 636 on the Service, which sends traffic to TCP 3636 on the directory pod.
 - [ ] **Two clusters or a workstation.** Provide private DNS and a path from each actual client to TCP 636. In the Azure example, check both `loadBalancerSourceRanges` and the source address allowed by each NetworkPolicy in the final render. If the network translates client addresses, use the address seen at each hop. Confirm client egress and a successful lookup from the application pod. [Azure work overlay](../examples/azure-private/kustomization.yaml)
-- [ ] **AWS PrivateLink.** Add `../../cross-cluster/aws-privatelink` to the work overlay's resources when 389 DS runs on AWS. Confirm the cluster's AWS Load Balancer Controller handles `service.k8s.aws/nlb`. Replace the subnet, private IP and security group examples. Use a TCP 636 listener with TLS passed through to 389 DS. Allow the NLB node addresses in the directory NetworkPolicy. Confirm a healthy target in the zone with the directory pod. [AWS manifests](../cross-cluster/aws-privatelink/directory-access.yaml) · [AWS target group address behavior](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/edit-target-group-attributes.html#client-ip-preservation)
+- [ ] **AWS PrivateLink.** Use the AWS work template when 389 DS runs on AWS. Confirm the cluster's AWS Load Balancer Controller handles `service.k8s.aws/nlb`. Set the two subnet IDs, their reserved addresses and the security group in your copy. Check the rendered directory NetworkPolicy allows both load balancer addresses. Use a TCP 636 listener with TLS passed through to 389 DS. Confirm a healthy target in the zone with the directory pod. [AWS work template](../examples/aws-privatelink/kustomization.yaml) · [AWS target group address behavior](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/edit-target-group-attributes.html#client-ip-preservation)
 - [ ] **AWS account and DNS owners.** On the directory side, create the endpoint service on the internal NLB, authorize the consuming AWS principal and accept the connection if approval is enabled. On the application side, create an interface endpoint in compatible zones. Allow TCP 636 from the actual client sources at the endpoint and NLB security groups. Point the certificate hostname to the endpoint through private DNS. From the Tomcat pod and workstation, confirm the name resolves to the endpoint and run the lookup. A workstation on the corporate network also needs routing and DNS forwarding to the endpoint VPC. [AWS endpoint service](https://docs.aws.amazon.com/vpc/latest/privatelink/create-endpoint-service.html)
 
 ## At cutover and renewal
@@ -22,33 +22,45 @@ Record the directory project, Tomcat project or cluster, workstation network, an
 - [ ] Run the work overlay's server-side dry run and check the selected image digest. After rollout, confirm `data-mq-ldap-0` is bound and `mq-ldap-0` is Ready. Initialize the accounts and publish the reviewed LDIF. The pod's startup check waits for the configured administrator password and its readiness check verifies TLS for the internal service name. [Deployment commands](../README.md#set-up-the-private-deployment)
 - [ ] From the actual Tomcat application, resolve a typed connection factory and a queue. From a separate workstation, create, change and delete a disposable alias. Confirm each change on Tomcat's next lookup. IBM's tool can briefly remove a name while replacing it. Coordinate changes to busy names with the application owner. [Client checks](../README.md#build-and-check-the-clients)
 - [ ] Send and receive a message on an approved test queue using the application's MQ identity. Record the result before removing the old Tomcat queue definitions. Also record the tested restore and the rollback owner.
-- [ ] **Certificate or administrator password change.** The server reads these settings at startup. When changing issuer, distribute trust for both issuers to the directory and clients first. Update the Secret, then run `oc -n mq-directory rollout restart statefulset/mq-ldap` and wait for rollout. From each client path, verify the served certificate's hostname, issuer and new serial, then repeat a lookup. Retire old trust after all clients have switched.
+- [ ] **Certificate or administrator password change.** The server reads these settings at startup. When changing issuer, distribute trust for both issuers to the directory and clients first. Update the Secret. Using the directory context and project from the install guide, run `dir_oc rollout restart statefulset/mq-ldap` and `dir_oc rollout status statefulset/mq-ldap --timeout=10m`. From each client path, verify the served certificate's hostname, issuer and new serial, then repeat a lookup. Retire old trust after all clients have switched. [Select the directory project](../README.md#set-up-the-private-deployment)
 - [ ] **Reader or publisher password change.** Rerun the corresponding `initialize` or `writer` command with the new password. Update the matching client secret during the change window and verify a fresh bind. Tomcat reads the file when opening a new catalog connection. If a Kubernetes Secret is mounted using `subPath`, replace the client pod to pick up the new file.
 
 ## Rehearse a database restore
 
-The pinned image supports an online database backup. The following commands use two projects on the selected cluster. Set `SOURCE_PROJECT` to the directory project and `RESTORE_PROJECT` to a separate, empty rehearsal project. Deploy the same image there, supply its Secrets and CA, and run `initialize` to create the matching database. The restore replaces the database in that rehearsal project.
+The pinned image supports an online database backup. Set `DIRECTORY_CONTEXT` to the directory cluster context, `SOURCE_PROJECT` to the directory project and `RESTORE_PROJECT` to a separate, empty rehearsal project. Start a second private overlay from the internal-registry template. Set its `namespace` to the rehearsal project and use the same image, a fresh volume and an internal Service. Its certificate must cover `mq-ldap.<rehearsal-project>.svc`. Supply that project's Secrets and CA and run `initialize` to create the matching database. The restore replaces the database in that rehearsal project.
 
 ```sh
 socket='ldapi://%2Fdata%2Frun%2Fslapd-localhost.socket'
 backup="mq-catalog-$(date -u +%Y%m%dT%H%M%SZ)"
-umask 077
-oc -n "${SOURCE_PROJECT:?Set the source project}" exec mq-ldap-0 -- dsconf -D 'cn=Directory Manager' \
-  -y /etc/mq-ldap-admin/password "$socket" backup create "/data/bak/$backup"
-oc -n "${SOURCE_PROJECT:?Set the source project}" exec mq-ldap-0 -- tar -C /data/bak -cf - "$backup" \
-  > "/secure/$backup.tar"
+archive="${BACKUP_DIR:-/secure}/$backup.tar"
+(
+  umask 077
+  set -C
+  if [ -e "$archive" ]; then echo "Choose a new backup name." >&2; exit 1; fi
+  oc --context="${DIRECTORY_CONTEXT:?Set the directory context}" -n "${SOURCE_PROJECT:?Set the source project}" \
+    exec mq-ldap-0 -- dsconf -D 'cn=Directory Manager' -y /etc/mq-ldap-admin/password \
+    "$socket" backup create "/data/bak/$backup" &&
+    oc --context="$DIRECTORY_CONTEXT" -n "$SOURCE_PROJECT" exec mq-ldap-0 -- \
+      tar -C /data/bak -cf - "$backup" > "$archive.partial" &&
+    tar -tf "$archive.partial" "$backup" > /dev/null &&
+    mv "$archive.partial" "$archive"
+)
 ```
 
-Keep the archive in protected backup storage. It contains directory accounts and queue settings. With the rehearsal project and claim confirmed, copy the archive and restore it.
+Keep the completed `.tar` file in protected backup storage. It contains directory accounts and queue settings. A `.partial` file identifies an incomplete copy. Once the backup command succeeds, confirm the rehearsal project and claim, then run the restore in the same shell.
 
 ```sh
-if [ -n "$SOURCE_PROJECT" ] && [ -n "$RESTORE_PROJECT" ] && [ "$RESTORE_PROJECT" != "$SOURCE_PROJECT" ]; then
-  oc -n "$RESTORE_PROJECT" exec -i mq-ldap-0 -- tar -C /data/bak -xf - < "/secure/$backup.tar" &&
-    oc -n "$RESTORE_PROJECT" exec mq-ldap-0 -- dsconf -D 'cn=Directory Manager' \
-      -y /etc/mq-ldap-admin/password "$socket" backup restore "/data/bak/$backup"
-else
-  echo "Set distinct source and rehearsal projects before restoring." >&2
-fi
+(
+  if [ "${SOURCE_PROJECT:?Set the source project}" = "${RESTORE_PROJECT:?Set the rehearsal project}" ]; then
+    echo "Choose a rehearsal project separate from the source." >&2
+    exit 1
+  fi
+  tar -tf "${archive:?Set the verified archive path}" "${backup:?Set the backup name}" > /dev/null &&
+    oc --context="${DIRECTORY_CONTEXT:?Set the directory context}" -n "$RESTORE_PROJECT" \
+      exec -i mq-ldap-0 -- tar -C /data/bak -xf - < "$archive" &&
+    oc --context="$DIRECTORY_CONTEXT" -n "$RESTORE_PROJECT" exec mq-ldap-0 -- dsconf -D 'cn=Directory Manager' \
+      -y /etc/mq-ldap-admin/password "${socket:?Set the directory socket}" backup restore "/data/bak/$backup"
+)
 ```
 
 Bind with the restored reader account and check a known queue target. Record the elapsed recovery time. Retain the deployment configuration, certificates, keys and passwords under their own recovery procedures.

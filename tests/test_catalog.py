@@ -3,7 +3,7 @@ from io import BytesIO
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "base" / "ldap"))
 import directory
@@ -35,10 +35,35 @@ class CatalogTests(unittest.TestCase):
                         other.replace(b"#1#QU#", b"#1#"), other.replace(b"cn: Other", b"cn: Third"),
                         other + b"javaFactory: extra\n", QUEUE.replace(b"cn=Orders", br"cn=\4frders")):
             with self.subTest(entry=invalid):
+                with patch.object(directory, "admin_connection") as connect:
+                    with self.assertRaises(ValueError):
+                        directory.run("publish", BytesIO(QUEUE + b"\n" + invalid))
+                    connect.assert_not_called()
                 conn = Mock()
                 with self.assertRaises(ValueError):
                     directory.publish(conn, BytesIO(QUEUE + b"\n" + invalid))
                 self.assertEqual(conn.mock_calls, [])
+
+    def test_validation_and_terminal_input_do_not_open_the_directory(self):
+        with patch("builtins.open", side_effect=AssertionError("accessed a server file")):
+            with patch("builtins.print") as output:
+                directory.run("validate", BytesIO(QUEUE))
+            output.assert_called_once_with("Validated 1 catalog entry.")
+            terminal = Mock()
+            terminal.isatty.return_value = True
+            for action in ("initialize", "writer", "publish", "validate"):
+                with self.subTest(action=action), self.assertRaisesRegex(ValueError, "Redirect"):
+                    directory.run(action, terminal)
+            terminal.read.assert_not_called()
+
+    def test_admin_commands_finish_reading_before_taking_the_lock(self):
+        for action, data in (("publish", QUEUE), ("writer", b"example\n"), ("initialize", b"example\n")):
+            with self.subTest(action=action):
+                source = BytesIO(data)
+                with patch.object(directory, "locked_admin", side_effect=RuntimeError("reached lock")):
+                    with self.assertRaisesRegex(RuntimeError, "reached lock"):
+                        directory.run(action, source)
+                self.assertEqual(source.tell(), len(data))
 
     def test_removed_optional_field_and_unrelated_attributes(self):
         dn, attrs = directory.catalog_entries(BytesIO(QUEUE))[0]
